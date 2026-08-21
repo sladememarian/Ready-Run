@@ -26,7 +26,8 @@ const el = {
 
 // ---------- renderer ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+const coarse = matchMedia('(pointer: coarse)').matches || matchMedia('(hover: none)').matches;
+renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.25 : 1.75));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -147,6 +148,17 @@ let game = null;
 const keys = Object.create(null);
 let running = false, pointerLocked = false;
 
+// Touch overlay — additive. Keyboard/mouse keep working. Visible only in touch-mode.
+const touch = {
+  active: false,
+  x: 0, y: 0,           // analog stick, -1..1
+  lookId: null,
+  lookX: 0, lookY: 0,
+  sprint: false,
+  crouch: false,
+  holdE: false,
+};
+
 function makeGame() {
   return {
     pos: new THREE.Vector3(), vel: new THREE.Vector3(),
@@ -264,7 +276,7 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 
 renderer.domElement.addEventListener('click', () => {
-  if (running && !pointerLocked) renderer.domElement.requestPointerLock();
+  if (running && !pointerLocked && !touch.active) renderer.domElement.requestPointerLock();
 });
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === renderer.domElement;
@@ -276,6 +288,125 @@ document.addEventListener('mousemove', (e) => {
   const lim = Math.PI / 2 - 0.02;          // clamp per CLAUDE.md
   game.pitch = Math.max(-lim, Math.min(lim, game.pitch));
 });
+
+function enableTouchMode() {
+  if (touch.active) return;
+  touch.active = true;
+  document.body.classList.add('touch-mode');
+  document.exitPointerLock?.();
+}
+
+function syncPlayingClass() {
+  document.body.classList.toggle('playing', running && game && !game.over);
+}
+
+function bindHold(el, on, off) {
+  if (!el) return;
+  const down = (e) => { e.preventDefault(); e.stopPropagation(); enableTouchMode(); on(); el.classList.add('on'); };
+  const up = (e) => { e.preventDefault(); e.stopPropagation(); off(); el.classList.remove('on'); };
+  el.addEventListener('pointerdown', down);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+  el.addEventListener('pointerleave', (e) => { if (e.buttons) up(e); });
+}
+
+(function setupTouch() {
+  const joyZone = document.getElementById('joy-zone');
+  const joyBase = document.getElementById('joy-base');
+  const joyKnob = document.getElementById('joy-knob');
+  const lookZone = document.getElementById('look-zone');
+  if (!joyZone || !lookZone) return;
+
+  let joyId = null, joyCx = 0, joyCy = 0, joyR = 52;
+
+  const setKnob = (nx, ny) => {
+    const px = nx * joyR, py = ny * joyR;
+    if (joyKnob) joyKnob.style.transform = `translate(${px}px, ${py}px)`;
+  };
+
+  const joyFrom = (clientX, clientY) => {
+    const dx = clientX - joyCx, dy = clientY - joyCy;
+    const mag = Math.hypot(dx, dy) || 1;
+    const clamped = Math.min(1, mag / joyR);
+    touch.x = (dx / mag) * clamped;
+    touch.y = (dy / mag) * clamped;
+    setKnob(touch.x, touch.y);
+  };
+
+  joyZone.addEventListener('pointerdown', (e) => {
+    if (joyId !== null) return;
+    e.preventDefault();
+    enableTouchMode();
+    joyId = e.pointerId;
+    joyZone.setPointerCapture?.(e.pointerId);
+    const r = (joyBase || joyZone).getBoundingClientRect();
+    joyCx = r.left + r.width / 2;
+    joyCy = r.top + r.height / 2;
+    joyR = Math.min(r.width, r.height) * 0.42;
+    joyFrom(e.clientX, e.clientY);
+  });
+  joyZone.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== joyId) return;
+    e.preventDefault();
+    joyFrom(e.clientX, e.clientY);
+  });
+  const joyEnd = (e) => {
+    if (e.pointerId !== joyId) return;
+    joyId = null;
+    touch.x = 0; touch.y = 0;
+    setKnob(0, 0);
+  };
+  joyZone.addEventListener('pointerup', joyEnd);
+  joyZone.addEventListener('pointercancel', joyEnd);
+
+  lookZone.addEventListener('pointerdown', (e) => {
+    if (touch.lookId !== null) return;
+    e.preventDefault();
+    enableTouchMode();
+    touch.lookId = e.pointerId;
+    touch.lookX = e.clientX;
+    touch.lookY = e.clientY;
+    lookZone.setPointerCapture?.(e.pointerId);
+  });
+  lookZone.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== touch.lookId || !game || game.over) return;
+    e.preventDefault();
+    const dx = e.clientX - touch.lookX;
+    const dy = e.clientY - touch.lookY;
+    touch.lookX = e.clientX;
+    touch.lookY = e.clientY;
+    // Slightly hotter than mouse so a thumb swipe covers a full turn.
+    game.yaw -= dx * 0.0044;
+    game.pitch -= dy * 0.0044;
+    const lim = Math.PI / 2 - 0.02;
+    game.pitch = Math.max(-lim, Math.min(lim, game.pitch));
+  });
+  const lookEnd = (e) => {
+    if (e.pointerId !== touch.lookId) return;
+    touch.lookId = null;
+  };
+  lookZone.addEventListener('pointerup', lookEnd);
+  lookZone.addEventListener('pointercancel', lookEnd);
+
+  bindHold(document.getElementById('btn-sprint'), () => { touch.sprint = true; }, () => { touch.sprint = false; });
+  bindHold(document.getElementById('btn-crouch'), () => { touch.crouch = true; }, () => { touch.crouch = false; });
+  bindHold(document.getElementById('btn-e'), () => { touch.holdE = true; }, () => { touch.holdE = false; });
+
+  const btnF = document.getElementById('btn-f');
+  if (btnF) {
+    btnF.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      enableTouchMode();
+      if (!running || !game || game.over) return;
+      game.flashlight = !game.flashlight;
+      audio.click();
+      emitNoise(0.6);
+      btnF.classList.toggle('on', game.flashlight);
+    });
+  }
+
+  window.addEventListener('touchstart', enableTouchMode, { passive: true, once: true });
+})();
 
 // ---------- noise ----------
 function emitNoise(intensity) {
@@ -296,7 +427,18 @@ function begin() {
   build();
   running = true;
   show(null);
-  renderer.domElement.requestPointerLock();
+  syncPlayingClass();
+  const btnF = document.getElementById('btn-f');
+  if (btnF) btnF.classList.toggle('on', !!game.flashlight);
+  if (!touch.active) renderer.domElement.requestPointerLock();
+}
+
+function resetTouch() {
+  touch.x = 0; touch.y = 0; touch.sprint = false; touch.crouch = false; touch.holdE = false;
+  touch.lookId = null;
+  document.querySelectorAll('#touch-btns .tbtn').forEach((b) => {
+    if (b.id !== 'btn-f') b.classList.remove('on');
+  });
 }
 
 function die() {
@@ -305,6 +447,8 @@ function die() {
   running = false;
   audio.death();
   document.exitPointerLock?.();
+  resetTouch();
+  syncPlayingClass();
   el.deathNote.textContent = DEATH_NOTES[Math.floor(Math.random() * DEATH_NOTES.length)];
   setTimeout(() => show(el.death), 900);
 }
@@ -315,6 +459,8 @@ function winRun() {
   running = false;
   audio.win();
   document.exitPointerLock?.();
+  resetTouch();
+  syncPlayingClass();
   setTimeout(() => show(el.win), 900);
 }
 
@@ -354,7 +500,7 @@ function step(dt) {
   game.t += dt;
 
   // --- crouch / eye height ---
-  const wantCrouch = !!(keys.ControlLeft || keys.ControlRight || keys.KeyC);
+  const wantCrouch = !!(keys.ControlLeft || keys.ControlRight || keys.KeyC || touch.crouch);
   game.crouch = wantCrouch;
   const targetEye = wantCrouch ? EYE_CROUCH : EYE_STAND;
   game.eye += (targetEye - game.eye) * Math.min(1, dt * 9);
@@ -367,11 +513,19 @@ function step(dt) {
   if (keys.KeyS) TMP.move.sub(TMP.fwd);
   if (keys.KeyD) TMP.move.add(TMP.right);
   if (keys.KeyA) TMP.move.sub(TMP.right);
+  // Analog stick: +y is screen-down = backward. Deadzone so a resting thumb is still.
+  const stickMag = Math.hypot(touch.x, touch.y);
+  if (stickMag > 0.12) {
+    const nx = touch.x / stickMag, ny = touch.y / stickMag;
+    const gain = Math.min(1, (stickMag - 0.12) / 0.88);
+    TMP.move.addScaledVector(TMP.fwd, -ny * gain);
+    TMP.move.addScaledVector(TMP.right, nx * gain);
+  }
 
   const moving = TMP.move.lengthSq() > 0.0001;
   if (moving) TMP.move.normalize();
 
-  const sprint = !!(keys.ShiftLeft || keys.ShiftRight) && !wantCrouch;
+  const sprint = !!(keys.ShiftLeft || keys.ShiftRight || touch.sprint) && !wantCrouch;
   const speed = wantCrouch ? 1.5 : sprint ? 5.0 : 2.9;
 
   // --- noise model ---
@@ -420,7 +574,7 @@ function step(dt) {
     if (d < nearD) { nearD = d; near = i; }
   }
 
-  const holding = !!keys.KeyE;
+  const holding = !!(keys.KeyE || touch.holdE);
   if (near >= 0 && holding) {
     if (game.aligning !== near) { game.aligning = near; game.alignT = 0; renderObjectives(); }
     game.alignT += dt;
@@ -452,7 +606,7 @@ function step(dt) {
       renderObjectives();
     }
     if (near >= 0) {
-      el.promptText.textContent = 'HOLD [E] TO ALIGN';
+      el.promptText.textContent = touch.active ? 'HOLD [HOLD] TO ALIGN' : 'HOLD [E] TO ALIGN';
       el.progressFill.style.width = '0%';
       el.prompt.classList.add('on');
     } else {
@@ -493,12 +647,15 @@ function step(dt) {
 }
 
 // ---------- resize ----------
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
+function onResize() {
+  const w = innerWidth, h = innerHeight;
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-  rt.setSize(innerWidth, innerHeight);
-});
+  renderer.setSize(w, h);
+  rt.setSize(w, h);
+}
+addEventListener('resize', onResize);
+visualViewport?.addEventListener('resize', onResize);
 
 // ---------- debug + test hooks ----------
 // Everything below is gated on RR_DEBUG_HOOKS, which esbuild replaces with a literal

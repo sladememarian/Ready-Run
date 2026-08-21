@@ -29,6 +29,8 @@ of travel and going still is what works. Align the three relays, then reach the 
 
 ## Controls
 
+Desktop (keyboard + mouse) is unchanged:
+
 ```
 W A S D   move
 SHIFT     sprint        — loud
@@ -37,6 +39,10 @@ F         flashlight    — the click carries
 E         hold to align a relay — it screams the whole time
 ESC       release the mouse
 ```
+
+Phone / tablet (`android` branch): left virtual stick moves, drag the right half of the
+screen to look, and the four buttons map to RUN / CROUCH / LIGHT / HOLD (align). Keyboard
+and mouse still work if a hardware set is attached.
 
 ## Running from source
 

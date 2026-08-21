@@ -47,13 +47,21 @@ TO PLAY
   Chrome or Edge recommended. Needs WebGL; no install, no internet.
   Click the page once to start, then click again to lock the mouse.
 
-CONTROLS
+CONTROLS (desktop)
   W A S D   move
   SHIFT     sprint      -- loud
   CTRL      crouch      -- near silent
   F         flashlight  -- the click carries
   E         hold to align a relay -- it screams the whole time
   ESC       release the mouse
+
+CONTROLS (phone)
+  Left stick     move
+  Right-half drag look / turn the view
+  RUN            sprint -- loud
+  CROUCH         near silent
+  LIGHT          flashlight -- the click carries
+  HOLD           hold to align a relay
 
 HOW IT WORKS
   The thing down here has no eyes. It hunts by sound.
