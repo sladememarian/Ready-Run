@@ -1,0 +1,21 @@
+{
+  "name": "ready-run",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ready-Run — a 3D horror game about being hunted by sound. Deep Listening Post Kestrel-9.",
+  "scripts": {
+    "dev": "python -m http.server 8177",
+    "build": "node build.mjs",
+    "verify": "node tests/verify-level.mjs",
+    "playtest": "node tests/playtest.mjs",
+    "verify-dist": "node tests/verify-dist.mjs",
+    "test": "npm run verify && npm run playtest",
+    "release": "npm run build && npm run verify-dist"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright": "^1.62.1",
+    "three": "^0.169.0"
+  }
+}
