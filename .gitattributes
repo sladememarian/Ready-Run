@@ -1,0 +1,12 @@
+# Normalise line endings so the repository always stores LF, regardless of each
+# developer's core.autocrlf setting. Without this, a Windows checkout can commit CRLF and
+# the Linux CI runner then sees modified files it did not modify.
+* text=auto eol=lf
+
+# Binary — never touch these.
+*.png binary
+*.zip binary
+*.ktx2 binary
+*.glb binary
+*.wav binary
+*.mp3 binary
