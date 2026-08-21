@@ -1,0 +1,73 @@
+name: Deploy to GitHub Pages
+
+# Builds the release bundle in CI and publishes it to Pages. dist/ stays gitignored —
+# committing build output would mean every gameplay change carries a 518 KB bundle diff,
+# and the published site could silently drift from src/ if someone forgot to rebuild.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let an in-flight deploy finish rather than cancelling it: a cancelled Pages deployment
+# can leave the live site on a half-published state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build release bundle
+        run: npm run build
+
+      # The build's own guard already throws if a hook survives, but assert it here too:
+      # this is the artifact that goes public, and a silent regression in build.mjs's
+      # define would otherwise ship console commands that skip the game.
+      - name: Assert debug hooks are stripped
+        run: |
+          for hook in __rrBanish __rrWarp __rrSetState __rrShowcase __readyRun; do
+            if grep -q "$hook" dist/app.js; then
+              echo "::error::debug hook $hook leaked into the published bundle"
+              exit 1
+            fi
+          done
+          echo "no debug hooks in dist/app.js"
+
+      # Pages serves over HTTP, so the ESM/file:// constraint does not apply here — but the
+      # bundle must still be self-contained, because a CDN import would add a third-party
+      # dependency to the live site.
+      - name: Assert bundle is self-contained
+        run: |
+          test ! -f dist/app.js.map || (echo "::error::sourcemap present" && exit 1)
+          grep -q 'jsdelivr\|importmap' dist/index.html && \
+            (echo "::error::index.html still references the CDN" && exit 1) || true
+          echo "dist/index.html is self-contained"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
