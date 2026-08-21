@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ready-Run — Deep Listening Post Kestrel-9</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23000'/><circle cx='8' cy='8' r='3' fill='%23ff8a3c'/></svg>">
+<style>
+  :root { --sodium: #ff8a3c; --bone: #d8d2c4; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; background:#000; overflow:hidden;
+    font-family: "Courier New", monospace; color:var(--bone); cursor:none; }
+  canvas { display:block; }
+
+  #hud { position:fixed; inset:0; pointer-events:none; opacity:0; transition:opacity .8s; }
+  #hud.on { opacity:1; }
+
+  #reticle { position:absolute; left:50%; top:50%; width:3px; height:3px;
+    margin:-1.5px 0 0 -1.5px; background:rgba(216,210,196,.5); border-radius:50%; }
+
+  #noise { position:absolute; left:32px; bottom:34px; width:150px; }
+  #noise .lbl { font-size:9px; letter-spacing:.22em; opacity:.4; margin-bottom:5px; }
+  #noise .bar { height:2px; background:rgba(216,210,196,.12); }
+  #noise .fill { height:100%; width:0%; background:var(--bone);
+    transition:width .1s linear, background .3s; }
+
+  #objectives { position:absolute; right:32px; top:32px; text-align:right;
+    font-size:11px; letter-spacing:.1em; line-height:1.9; }
+  #objectives .t { font-size:9px; letter-spacing:.22em; opacity:.4; margin-bottom:7px; }
+  #objectives .o { opacity:.55; }
+  #objectives .o.done { opacity:.25; text-decoration:line-through; }
+  #objectives .o.live { opacity:1; color:var(--sodium); }
+
+  #prompt { position:absolute; left:50%; bottom:26%; transform:translateX(-50%);
+    font-size:12px; letter-spacing:.16em; opacity:0; transition:opacity .2s; text-align:center; }
+  #prompt.on { opacity:.85; }
+  #progress { width:190px; height:2px; background:rgba(216,210,196,.15); margin:9px auto 0; }
+  #progress .fill { height:100%; width:0%; background:var(--sodium); }
+
+  #subtitle { position:absolute; left:50%; bottom:12%; transform:translateX(-50%);
+    font-size:12px; font-style:italic; letter-spacing:.05em; opacity:0;
+    transition:opacity 1s; max-width:60ch; text-align:center; color:#9a9488; }
+  #subtitle.on { opacity:1; }
+
+  .screen { position:fixed; inset:0; background:#000; display:flex; align-items:center;
+    justify-content:center; z-index:10; cursor:pointer; }
+  .screen.hide { display:none; }
+  .inner { max-width:620px; padding:40px; }
+  h1 { font-size:40px; letter-spacing:.5em; font-weight:normal; margin-bottom:6px; }
+  .sub { font-size:10px; letter-spacing:.34em; opacity:.4; margin-bottom:34px; }
+  .body { font-size:13px; line-height:2; opacity:.62; margin-bottom:30px; }
+  .body em { color:var(--sodium); font-style:normal; }
+  .keys { font-size:11px; line-height:2.1; opacity:.42; margin-bottom:34px; }
+  .keys b { color:var(--bone); font-weight:normal; display:inline-block; min-width:88px; }
+  .go { font-size:12px; letter-spacing:.3em; color:var(--sodium); animation:p 2.2s infinite; }
+  @keyframes p { 0%,100%{opacity:.35} 50%{opacity:1} }
+  #death .inner, #win .inner { text-align:center; }
+  #death h1 { font-size:26px; letter-spacing:.34em; color:#a33; }
+  #win h1 { font-size:26px; letter-spacing:.34em; color:var(--sodium); }
+  #loading { position:fixed; inset:0; background:#000; display:flex; align-items:center;
+    justify-content:center; z-index:20; font-size:10px; letter-spacing:.3em; opacity:.5; }
+  #loading.hide { display:none; }
+</style>
+</head>
+<body>
+
+<div id="loading">DESCENDING…</div>
+
+<div id="start" class="screen hide">
+  <div class="inner">
+    <h1>READY<span style="opacity:.3">·</span>RUN</h1>
+    <div class="sub">DEEP LISTENING POST KESTREL-9 &nbsp;·&nbsp; −1042 M</div>
+    <div class="body">
+      The array was built to listen. In 1985 it heard something answer from below, and Command
+      ordered the signal broadcast back down. The Choir understood that as an address.<br><br>
+      What came up the shafts has no eyes. It hunts by sound.<br><br>
+      Align the three relays and the array goes dark. <em>Each relay screams while it aligns.</em>
+    </div>
+    <div class="keys">
+      <b>W A S D</b> move<br>
+      <b>SHIFT</b> sprint — loud<br>
+      <b>CTRL</b> crouch — near silent<br>
+      <b>F</b> flashlight — the click carries<br>
+      <b>E</b> hold to align a relay<br>
+    </div>
+    <div class="go">CLICK TO DESCEND</div>
+  </div>
+</div>
+
+<div id="death" class="screen hide">
+  <div class="inner">
+    <h1>IT FOUND YOU</h1>
+    <div class="body" id="death-note"></div>
+    <div class="go">CLICK TO TRY AGAIN</div>
+  </div>
+</div>
+
+<div id="win" class="screen hide">
+  <div class="inner">
+    <h1>THE ARRAY IS DARK</h1>
+    <div class="body">
+      The lift climbs. Below you the Choir is still singing — but no longer to anyone.<br><br>
+      You wrote the protocol on the wall for whoever comes next.
+    </div>
+    <div class="go">CLICK TO DESCEND AGAIN</div>
+  </div>
+</div>
+
+<div id="hud">
+  <div id="reticle"></div>
+  <div id="noise">
+    <div class="lbl">NOISE</div>
+    <div class="bar"><div class="fill" id="noise-fill"></div></div>
+  </div>
+  <div id="objectives">
+    <div class="t">OBJECTIVES</div>
+    <div id="obj-list"></div>
+  </div>
+  <div id="prompt">
+    <div id="prompt-text"></div>
+    <div id="progress"><div class="fill" id="progress-fill"></div></div>
+  </div>
+  <div id="subtitle"></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
