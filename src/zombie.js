@@ -164,6 +164,7 @@ export class Listener {
     const g = new THREE.Group();
     g.add(mesh);
     this.body = mesh;                     // rig root for animation
+    this.mesh = g;                        // group handle (build/scene contract)
     return g;
   }
 
