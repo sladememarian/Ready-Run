@@ -1,7 +1,7 @@
 // main.js — Ready-Run. Camera, player, noise model, objectives, post, loop.
 import * as THREE from 'three';
 import { Level, CELL } from './level.js';
-import { Listener, STATE } from './listener.js';
+import { Listener, STATE } from './zombie.js';
 import { Audio } from './audio.js';
 
 const NOISE = { still: 0, crouch: 0.15, walk: 0.45, sprint: 1.0 };
@@ -127,8 +127,8 @@ const postMat = new THREE.ShaderMaterial({
       // grain
       float g = hash(uv * 700.0 + uTime * 40.0) - 0.5;
       col += g * uGrain;
-      // threat desaturation-to-red at very close range
-      col = mix(col, vec3(l * 1.15, l * 0.42, l * 0.42), uPulse * 0.35);
+      // threat desaturation-to-red at very close range; uPulse spikes to ~1.9 during a jump scare
+      col = mix(col, vec3(l * 1.15, l * 0.42, l * 0.42), clamp(uPulse, 0.0, 1.0) * 0.35 + max(uPulse - 1.0, 0.0) * 0.55);
       gl_FragColor = vec4(max(col, 0.0), 1.0);
     }
   `,
@@ -170,6 +170,7 @@ function makeGame() {
     aligning: -1, alignT: 0,
     liftLive: false, over: false,
     t: 0, pingT: 0,
+    scare: 0,
   };
 }
 
@@ -194,7 +195,7 @@ function say(text, dur = 4.5) {
 }
 
 // ---------- build / reset ----------
-function build() {
+async function build() {
   // tear down previous run
   if (level) {
     listener?.dispose();
@@ -248,13 +249,23 @@ function build() {
   liftMesh.position.set(lw.x, 1.3, lw.z);
   scene.add(liftMesh);
 
-  // Listener spawns far from the player
+  // Listener (zombie) spawns far from the player. Model load is async but the
+  // build() call below guards: it throws if the mesh isn't ready, so await it.
   let far = level.roomCenters[0], bd = -1;
   for (const c of level.roomCenters) {
     const d = Math.hypot(c.x - level.spawn.x, c.z - level.spawn.z);
     if (d > bd) { bd = d; far = c; }
   }
   listener = new Listener(level, far);
+  if (!listener.mesh) {
+    try {
+      await listener.loadModel('./public/models/zombie.obj');
+    } catch (err) {
+      console.error('zombie model failed to load:', err);
+      say('SIGNAL LOST — the deep is silent.', 6);
+      throw err;
+    }
+  }
   listener.build(scene);
   listener.onCall = () => audio.call();
 
@@ -422,12 +433,20 @@ function show(screen) {
   el.hud.classList.toggle('on', !screen);
 }
 
-function begin() {
+async function begin() {
   audio.start();
-  build();
-  running = true;
+  running = false;                 // hold the loop until the zombie model is in
   show(null);
   syncPlayingClass();
+  try {
+    await build();
+  } catch (err) {
+    console.error('build failed:', err);
+    show(el.start);
+    return;
+  }
+  game = game || makeGame();
+  running = true;
   const btnF = document.getElementById('btn-f');
   if (btnF) btnF.classList.toggle('on', !!game.flashlight);
   if (!touch.active) renderer.domElement.requestPointerLock();
@@ -623,14 +642,30 @@ function step(dt) {
   // --- lift ---
   if (game.liftLive && liftMesh.position.distanceTo(yawObj.position) < 2.4) { winRun(); return; }
 
-  // --- listener ---
+  // --- listener (zombie + jump-scare hooks) ---
   TMP.pos.set(game.pos.x, 0, game.pos.z);
-  const caught = listener.update(dt, TMP.pos, audio);
+  let scareFlash = 0;
+  const caught = listener.update(dt, TMP.pos, audio, {
+    scareBlocked: () => game.over,
+    onJumpscareStart: () => { game.scare = 0.0001; },
+    onScareProgress: (p) => { game.scare = p; },
+  });
+  if (game.scare > 0) scareFlash = Math.min(1, game.scare);
   const prox = listener.proximity(TMP.pos);
   audio.heartbeat(prox, dt);
 
-  postUniforms.uPulse.value += (prox - postUniforms.uPulse.value) * Math.min(1, dt * 4);
-  renderer.toneMappingExposure = BASE_EXPOSURE - prox * 0.25;
+  // threat pulse + jump-scare red flash drive the post pass
+  postUniforms.uPulse.value += ((prox + scareFlash * 0.9) - postUniforms.uPulse.value)
+    * Math.min(1, dt * 4);
+  renderer.toneMappingExposure = BASE_EXPOSURE - prox * 0.25 - scareFlash * 0.35;
+
+  // camera shake during the lunge — decays with the scare progress
+  if (scareFlash > 0 && !game.over) {
+    const amp = 0.035 * Math.sin(scareFlash * Math.PI);
+    yawObj.position.x += (Math.random() - 0.5) * amp;
+    yawObj.position.y += (Math.random() - 0.5) * amp;
+    game.yaw += (Math.random() - 0.5) * 0.004;
+  }
 
   if (listener.state === STATE.HUNT && prox > 0.55) {
     if (subTimer <= 0) say('It is coming. Do not run in a straight line.', 3);

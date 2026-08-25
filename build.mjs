@@ -40,6 +40,13 @@ if (html.includes('importmap') || html.includes('src/main.js')) {
 }
 fs.writeFileSync(path.join(DIST, 'index.html'), html);
 
+// Ship the zombie model with the bundle — the release must stay self-contained.
+// The fetch path is relative, so the same './public/models/...' URL works from dist/.
+fs.mkdirSync(path.join(DIST, 'public', 'models'), { recursive: true });
+fs.copyFileSync(
+  path.join(ROOT, 'public', 'models', 'zombie.obj'),
+  path.join(DIST, 'public', 'models', 'zombie.obj'));
+
 fs.writeFileSync(path.join(DIST, 'HOW-TO-PLAY.txt'), `READY-RUN — playtest build
 
 TO PLAY
@@ -95,11 +102,22 @@ if (result.metafile) {
 
 // Zip it for handoff. Everything is nested under one folder so extracting into a
 // Downloads directory does not scatter three loose files next to whatever else is there.
+// Recurses into subdirectories (public/models/...) so the zip stays self-contained.
 const zipName = 'Ready-Run-playtest.zip';
-const zip = zipSync(fs.readdirSync(DIST).sort().map((f) => ({
-  name: 'Ready-Run/' + f,
-  data: fs.readFileSync(path.join(DIST, f)),
-  mtime: fs.statSync(path.join(DIST, f)).mtime,
-})));
+const zipEntries = [];
+const collect = (dir, rel) => {
+  for (const f of fs.readdirSync(dir).sort()) {
+    const abs = path.join(dir, f);
+    const relPath = rel ? `${rel}/${f}` : f;
+    if (fs.statSync(abs).isDirectory()) collect(abs, relPath);
+    else zipEntries.push({
+      name: 'Ready-Run/' + relPath,
+      data: fs.readFileSync(abs),
+      mtime: fs.statSync(abs).mtime,
+    });
+  }
+};
+collect(DIST, '');
+const zip = zipSync(zipEntries);
 fs.writeFileSync(path.join(ROOT, zipName), zip);
 console.log(`${zipName}   ${(zip.length / 1024).toFixed(0)} KB  (send this)`);

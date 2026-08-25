@@ -154,6 +154,37 @@ export class Audio {
     this._burst(1.3, 'bandpass', 700, 1.5, 0.13, 0.25);
   }
 
+  // Jump-scare stinger: shrieking cluster + body-slam sub drop + noise slam.
+  jumpscareStinger() {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    // shriek cluster — detuned saws sweeping up
+    [880, 932, 1245].forEach((f, i) => {
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(f * 0.55, t);
+      o.frequency.exponentialRampToValueAtTime(f * 1.6, t + 0.32);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.22 - i * 0.04, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.85);
+      o.connect(g).connect(this.master);
+      o.start(t); o.stop(t + 0.9);
+    });
+    // sub drop — the "gut punch"
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(120, t);
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.5);
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    o.connect(g).connect(this.master);
+    o.start(t); o.stop(t + 0.75);
+    // metallic noise slam
+    this._burst(0.4, 'highpass', 1800, 0.8, 0.35);
+  }
+
   // proximity heartbeat — the real threat readout
   heartbeat(prox, dt) {
     if (!this.ready || prox <= 0.02) return;
