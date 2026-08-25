@@ -154,35 +154,53 @@ export class Audio {
     this._burst(1.3, 'bandpass', 700, 1.5, 0.13, 0.25);
   }
 
-  // Jump-scare stinger: shrieking cluster + body-slam sub drop + noise slam.
+  // Jump-scare stinger: LOUD. Shrieking cluster + body-slam sub drop + noise slam,
+  // all pushed hard — the mix dips everything else for a beat so it dominates.
   jumpscareStinger() {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
-    // shriek cluster — detuned saws sweeping up
-    [880, 932, 1245].forEach((f, i) => {
+    // duck the ambient bed so the hit lands in silence-then-violence
+    const master = this.master.gain;
+    master.cancelScheduledValues(t);
+    master.setValueAtTime(master.value, t);
+    master.linearRampToValueAtTime(0.25, t + 0.05);       // duck
+    master.linearRampToValueAtTime(1.6, t + 0.09);        // slam past unity
+    master.linearRampToValueAtTime(0.9, t + 1.4);         // settle
+
+    // shriek cluster — detuned saws sweeping up, louder and longer than v1
+    [880, 932, 1245, 1661].forEach((f, i) => {
       const o = this.ctx.createOscillator();
       const g = this.ctx.createGain();
       o.type = 'sawtooth';
-      o.frequency.setValueAtTime(f * 0.55, t);
-      o.frequency.exponentialRampToValueAtTime(f * 1.6, t + 0.32);
+      o.frequency.setValueAtTime(f * 0.45, t);
+      o.frequency.exponentialRampToValueAtTime(f * 1.7, t + 0.30);
+      // vibrato shriek on top
+      const lfo = this.ctx.createOscillator();
+      const lg = this.ctx.createGain();
+      lfo.frequency.value = 28 + i * 6;
+      lg.gain.value = f * 0.06;
+      lfo.connect(lg).connect(o.frequency);
+      lfo.start(t); lfo.stop(t + 1.2);
+
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.22 - i * 0.04, t + 0.03);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.85);
+      g.gain.exponentialRampToValueAtTime(0.34 - i * 0.05, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.15);
       o.connect(g).connect(this.master);
-      o.start(t); o.stop(t + 0.9);
+      o.start(t); o.stop(t + 1.2);
     });
-    // sub drop — the "gut punch"
+    // sub drop — the "gut punch", deeper and harder
     const o = this.ctx.createOscillator();
     const g = this.ctx.createGain();
     o.type = 'sine';
-    o.frequency.setValueAtTime(120, t);
-    o.frequency.exponentialRampToValueAtTime(28, t + 0.5);
-    g.gain.setValueAtTime(0.5, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.exponentialRampToValueAtTime(24, t + 0.55);
+    g.gain.setValueAtTime(0.85, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
     o.connect(g).connect(this.master);
-    o.start(t); o.stop(t + 0.75);
-    // metallic noise slam
-    this._burst(0.4, 'highpass', 1800, 0.8, 0.35);
+    o.start(t); o.stop(t + 0.95);
+    // metallic noise slam + a second delayed crack (double-hit)
+    this._burst(0.5, 'highpass', 1600, 0.8, 0.5);
+    setTimeout(() => this.ready && this._burst(0.35, 'bandpass', 900, 1.2, 0.35), 130);
   }
 
   // proximity heartbeat — the real threat readout
