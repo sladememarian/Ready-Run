@@ -14,48 +14,48 @@ const LUNGE_TRIGGER = 2.1;     // start the lunge from this distance
 const LUNGE_TIME = 0.42;       // seconds of lunge before the kill lands
 const LUNGE_SPEED = 9.5;       // m/s toward the player during the scare
 
-// Procedural zombie skin — no external texture needed (the shipped 32x32 PNG is empty).
-function makeZombieTexture() {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 256;
-  const g = c.getContext('2d');
-  // base: decayed grey-green skin
-  g.fillStyle = '#5a6b4a';
-  g.fillRect(0, 0, 256, 256);
-  // mottled rot patches
-  for (let i = 0; i < 220; i++) {
-    const x = Math.random() * 256, y = Math.random() * 256;
-    const r = 3 + Math.random() * 14;
-    const shade = ['#4a5940', '#66755a', '#3d4a35', '#708064'][i % 4];
-    g.fillStyle = shade;
-    g.globalAlpha = 0.25 + Math.random() * 0.3;
-    g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+// Procedural zombie skin — vertex colors. The shipped OBJ has only 42 UVs for
+// 1054 verts (no usable unwrap), so a texture map cannot work; painting per-vertex
+// rot colors does, and needs no assets.
+function paintZombieVertices(geo) {
+  const pos = geo.getAttribute('position');
+  const count = pos.count;
+  const colors = new Float32Array(count * 3);
+  // deterministic hash noise so the pattern is stable frame to frame
+  const h = (x, y, z) => {
+    const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+    return s - Math.floor(s);
+  };
+  const c = new THREE.Color();
+  for (let i = 0; i < count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const n1 = h(x * 2.1, y * 2.3, z * 1.9);        // large mottle
+    const n2 = h(x * 6.4, y * 6.9, z * 5.8);        // fine grain
+    const heightT = y / 2.58;                        // 0 feet → 1 crown
+
+    // base: decayed grey-green — pushed brighter so it reads in near-dark
+    c.setRGB(
+      0.38 + n1 * 0.14 + heightT * 0.12,
+      0.44 + n1 * 0.12 - heightT * 0.05,
+      0.32 + n2 * 0.08,
+    );
+    // rot patches: dark brown-black blotches
+    if (n2 > 0.72) {
+      const k = (n2 - 0.72) / 0.28;
+      c.lerp(new THREE.Color(0.16, 0.10, 0.07), k * 0.85);
+    }
+    // exposed wounds: raw red-brown, rarer and deeper
+    if (n1 > 0.86) {
+      const k = Math.min(1, (n1 - 0.86) / 0.14);
+      c.lerp(new THREE.Color(0.42, 0.11, 0.07), k);
+    }
+    // grime near the feet — crawled through filth
+    if (heightT < 0.22) {
+      c.lerp(new THREE.Color(0.13, 0.12, 0.09), (0.22 - heightT) / 0.22 * 0.7);
+    }
+    colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
   }
-  // dried-blood wounds
-  for (let i = 0; i < 26; i++) {
-    const x = Math.random() * 256, y = Math.random() * 256;
-    g.globalAlpha = 0.5 + Math.random() * 0.35;
-    g.fillStyle = '#4d1f18';
-    g.beginPath();
-    g.ellipse(x, y, 2 + Math.random() * 7, 4 + Math.random() * 11,
-      Math.random() * 3, 0, 7);
-    g.fill();
-    // darker crust rim
-    g.strokeStyle = '#2c110c';
-    g.lineWidth = 1;
-    g.stroke();
-  }
-  // grime streaks (gravity drips)
-  for (let i = 0; i < 40; i++) {
-    const x = Math.random() * 256, y = Math.random() * 200;
-    g.globalAlpha = 0.12;
-    g.fillStyle = '#2f3826';
-    g.fillRect(x, y, 1 + Math.random() * 2, 8 + Math.random() * 30);
-  }
-  g.globalAlpha = 1;
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  return tex;
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 }
 
 // Minimal OBJ loader — v/vn/vt/f lines only, triangulated on read.
@@ -148,18 +148,22 @@ export class Listener {
     geo.rotateY(Math.PI);                        // face travel direction like old rig
     geo.computeBoundingSphere();
 
-    const tex = makeZombieTexture();
+    paintZombieVertices(geo);
+
     const mat = new THREE.MeshStandardMaterial({
-      map: tex, roughness: 0.85, metalness: 0.02,
+      vertexColors: true,                 // baked rot colors, no UV unwrap needed
+      roughness: 0.92, metalness: 0.0,
+      emissive: new THREE.Color(0x1a0505),   // faint inner glow so it never fully vanishes
+      emissiveIntensity: 0.35,
     });
-    this._geo = geo; this._tex = tex; this._mat = mat;
+    this._geo = geo; this._mat = mat;
 
     const mesh = new THREE.Mesh(geo, mat);
     mesh.name = 'torso';
     mesh.castShadow = true;
     const g = new THREE.Group();
     g.add(mesh);
-    this.mesh = g;
+    this.body = mesh;                     // rig root for animation
     return g;
   }
 
@@ -202,16 +206,44 @@ export class Listener {
   }
 
   _pose(dt, moving) {
-    // Zombie shamble: asymmetric arm swing, head loll, weight shift. Cheap and
-    // driven off the same poseT clock the old rig used.
+    // Full-body procedural rig on this.body: shamble walk, head loll, weight
+    // shift, hunt twitch, and a wind-up + pounce during the lunge.
+    if (!this.body) return;
     const alertness = this._alertness();
     this._poseT = (this._poseT || 0) + dt;
     const t = this._poseT;
-    this.skullLoll = Math.sin(t * 1.7) * 0.14 + alertness * 0.1;
-    this.armSwing = moving ? Math.sin(t * (4 + alertness * 4)) : Math.sin(t * 1.1) * 0.15;
+
+    const gait = moving ? Math.sin(t * (3.4 + alertness * 2.6)) : 0;
+    const gait2 = moving ? Math.sin(t * (3.4 + alertness * 2.6) + Math.PI / 2) : 0;
+    const breathe = Math.sin(t * 1.6) * 0.02;
+
+    if (this.lungeT >= 0) {
+      // POUNCE: brief recoil wind-up, then a forward-flung leap off the ground.
+      const p = Math.min(1, this.lungeT / LUNGE_TIME);
+      const spring = p < 0.22 ? -(1 - p / 0.22) * 0.24 : 0;
+      this.body.rotation.x = 0.55 * p + spring;
+      this.body.rotation.z = Math.sin(t * 30) * 0.05;
+      this.body.position.y = Math.sin(Math.min(1, p) * Math.PI) * 0.38;
+      return;
+    }
+
+    // Shamble: hunched spine, swaying roll, step bounce, head loll
+    this.body.rotation.x = 0.14 + alertness * 0.10 + breathe + gait2 * 0.03;
+    this.body.rotation.z = gait * 0.075;
+    this.body.position.y = Math.abs(gait) * 0.05;
+    this.skullLoll = Math.sin(t * 1.7) * 0.16 + alertness * 0.12;
+    this.body.rotation.y = Math.sin(t * 0.9) * 0.08;
+    this.armSwing = gait;
+
+    // Hunt twitch — irregular, insect-like jerk plus a click so you hear it move
+    if (this.state === STATE.HUNT && Math.random() < 0.02) {
+      this.body.rotation.z += (Math.random() - 0.5) * 0.18;
+      this._twitchAudio?.();
+    }
   }
 
   update(dt, playerPos, audio, hooks = {}) {
+    this._twitchAudio = () => audio.tick?.(0.5);
     // ---- jump-scare sequence ----
     if (this.lungeT >= 0) {
       this.lungeT += dt;
@@ -329,7 +361,6 @@ export class Listener {
   }
   dispose() {
     this._geo?.dispose();
-    this._tex?.dispose();
     this._mat?.dispose();
     this.mesh?.traverse((o) => o.geometry && o.geometry.dispose());
   }

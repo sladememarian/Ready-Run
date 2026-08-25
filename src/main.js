@@ -128,7 +128,11 @@ const postMat = new THREE.ShaderMaterial({
       float g = hash(uv * 700.0 + uTime * 40.0) - 0.5;
       col += g * uGrain;
       // threat desaturation-to-red at very close range; uPulse spikes to ~1.9 during a jump scare
-      col = mix(col, vec3(l * 1.15, l * 0.42, l * 0.42), clamp(uPulse, 0.0, 1.0) * 0.35 + max(uPulse - 1.0, 0.0) * 0.55);
+      float scare = max(uPulse - 1.0, 0.0);                 // 0 normal, ~0.9 at pounce
+      col = mix(col, vec3(l * 1.15, l * 0.42, l * 0.42), clamp(uPulse, 0.0, 1.0) * 0.35);
+      // full-frame blood wash at scare peak — this is the frame you remember
+      col = mix(col, vec3(0.55, 0.02, 0.02), clamp(scare, 0.0, 1.0) * 0.65);
+      col += vec3(0.25, 0.03, 0.03) * pow(scare, 3.0);       // hot core blowout
       gl_FragColor = vec4(max(col, 0.0), 1.0);
     }
   `,
@@ -659,12 +663,13 @@ function step(dt) {
     * Math.min(1, dt * 4);
   renderer.toneMappingExposure = BASE_EXPOSURE - prox * 0.25 - scareFlash * 0.35;
 
-  // camera shake during the lunge — decays with the scare progress
+  // camera shake + white-red flash during the lunge — much harder than v1
   if (scareFlash > 0 && !game.over) {
-    const amp = 0.035 * Math.sin(scareFlash * Math.PI);
+    const amp = 0.09 * Math.sin(Math.min(1, scareFlash) * Math.PI);
     yawObj.position.x += (Math.random() - 0.5) * amp;
     yawObj.position.y += (Math.random() - 0.5) * amp;
-    game.yaw += (Math.random() - 0.5) * 0.004;
+    game.yaw += (Math.random() - 0.5) * 0.012;
+    game.pitch += (Math.random() - 0.5) * 0.010;
   }
 
   if (listener.state === STATE.HUNT && prox > 0.55) {
