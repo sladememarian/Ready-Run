@@ -261,7 +261,7 @@ async function build() {
     if (d > bd) { bd = d; far = c; }
   }
   listener = new Listener(level, far);
-  if (!listener.mesh) {
+  if (!listener.mesh || !listener.body) {
     try {
       await listener.loadModel('./public/models/zombie.obj');
     } catch (err) {
